@@ -125,6 +125,12 @@ async function addLog() {}
 async function broadcastStopToContentScripts() {}
 async function markRunningStepsStopped() {}
 async function broadcastAutoRunStatus() {}
+async function getState() {
+  return { autoRunning: false };
+}
+function isAutoRunScheduledState() {
+  return false;
+}
 function getStep8CallbackUrlFromNavigation() { return ''; }
 function getStep8CallbackUrlFromTabUpdate() { return ''; }
 async function completeStepFromBackground() {}

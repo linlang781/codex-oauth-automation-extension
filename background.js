@@ -769,6 +769,7 @@ async function refreshHotmailAccessToken(account) {
   formData.set('grant_type', 'refresh_token');
   formData.set('refresh_token', account.refreshToken);
   formData.set('scope', scopes.join(' '));
+  formData.set('redirect_uri', 'https://login.microsoftonline.com/common/oauth2/nativeclient');
 
   let response;
   try {
@@ -801,7 +802,11 @@ async function refreshHotmailAccessToken(account) {
   }
 
   if (!response.ok || !payload?.access_token) {
-    const errorText = payload?.error_description || payload?.error?.message || payload?.error || payload?.message || text || `HTTP ${response.status}`;
+    const rawErrorText = payload?.error_description || payload?.error?.message || payload?.error || payload?.message || text || `HTTP ${response.status}`;
+    const isCrossOriginError = typeof rawErrorText === 'string' && rawErrorText.includes('AADSTS90023');
+    const errorText = isCrossOriginError
+      ? `Azure AD 拒绝了跨域令牌请求（AADSTS90023）。请在 Azure AD 应用注册中将应用平台改为"单页应用程序（SPA）"，并将重定向 URI 设置为 https://login.microsoftonline.com/common/oauth2/nativeclient，或将应用类型改为"移动和桌面应用程序（Native）"。`
+      : rawErrorText;
     const error = new Error(`Hotmail 令牌刷新失败：${errorText}`);
     error.code = 'HOTMAIL_TOKEN_REFRESH_FAILED';
     throw error;
@@ -1260,6 +1265,30 @@ async function closeLocalhostCallbackTabs(callbackUrl, options = {}) {
   }
 
   await addLog(`已关闭 ${matchedIds.length} 个匹配当前 OAuth callback 的 localhost 残留标签页。`, 'info');
+  return matchedIds.length;
+}
+
+function buildLocalhostCleanupPrefix(rawUrl) {
+  if (!isLocalhostOAuthCallbackUrl(rawUrl)) return '';
+  const parsed = parseUrlSafely(rawUrl);
+  return parsed ? `${parsed.origin}/auth` : '';
+}
+
+async function closeTabsByUrlPrefix(prefix, options = {}) {
+  if (!prefix) return 0;
+
+  const { excludeTabIds = [] } = options;
+  const excluded = new Set(excludeTabIds.filter(id => Number.isInteger(id)));
+  const tabs = await chrome.tabs.query({});
+  const matchedIds = tabs
+    .filter((tab) => Number.isInteger(tab.id) && !excluded.has(tab.id))
+    .filter((tab) => typeof tab.url === 'string' && tab.url.startsWith(prefix))
+    .map((tab) => tab.id);
+
+  if (!matchedIds.length) return 0;
+
+  await chrome.tabs.remove(matchedIds).catch(() => { });
+  await addLog(`已关闭 ${matchedIds.length} 个匹配 ${prefix} 的 localhost 残留标签页。`, 'info');
   return matchedIds.length;
 }
 

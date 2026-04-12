@@ -56,6 +56,8 @@ const bundle = [
   extractFunction('isLocalhostOAuthCallbackUrl'),
   extractFunction('isLocalhostOAuthCallbackTabMatch'),
   extractFunction('closeLocalhostCallbackTabs'),
+  extractFunction('buildLocalhostCleanupPrefix'),
+  extractFunction('closeTabsByUrlPrefix'),
   extractFunction('handleStepData'),
 ].join('\n');
 
