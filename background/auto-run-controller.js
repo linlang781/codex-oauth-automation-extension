@@ -1,4 +1,4 @@
-(function attachBackgroundAutoRunController(root, factory) {
+﻿(function attachBackgroundAutoRunController(root, factory) {
   root.MultiPageBackgroundAutoRunController = factory();
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundAutoRunControllerModule() {
   function createAutoRunController(deps = {}) {

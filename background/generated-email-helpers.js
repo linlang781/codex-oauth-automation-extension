@@ -10,10 +10,12 @@
       DUCK_AUTOFILL_URL,
       fetch,
       fetchIcloudHideMyEmail,
+      fetchGmailCodeAlias,
       getCloudflareTempEmailAddressFromResponse,
       getCloudflareTempEmailConfig,
       getState,
       ensureMail2925AccountForFlow,
+      isGmailCodeProvider,
       joinCloudflareTempEmailUrl,
       normalizeCloudflareDomain,
       normalizeCloudflareTempEmailAddress,
@@ -231,6 +233,12 @@
     async function fetchGeneratedEmail(state, options = {}) {
       const currentState = state || await getState();
       const provider = String(options.mailProvider || currentState.mailProvider || '').trim().toLowerCase();
+      if (isGmailCodeProvider?.(provider)) {
+        const aliasResult = await fetchGmailCodeAlias(currentState);
+        await setEmailState(aliasResult.alias);
+        await addLog(`GmailCode：已获取别名邮箱 ${aliasResult.alias}`, 'ok');
+        return aliasResult.alias;
+      }
       const mail2925Mode = options.mail2925Mode !== undefined
         ? options.mail2925Mode
         : currentState.mail2925Mode;

@@ -50,6 +50,8 @@
       isHotmailProvider,
       isLocalhostOAuthCallbackUrl,
       isLuckmailProvider,
+      isGmailCodeProvider,
+      markGmailCodeAliasUsed,
       isStopError,
       isTabAlive,
       launchAutoRunTimerPlan,
@@ -222,6 +224,13 @@
             }
             await clearLuckmailRuntimeState({ clearEmail: true });
             await addLog('当前 LuckMail 邮箱运行态已清空，下轮将优先复用未用邮箱或重新购买邮箱。', 'ok');
+          }
+          if (typeof isGmailCodeProvider === 'function' && typeof markGmailCodeAliasUsed === 'function' && isGmailCodeProvider(latestState)) {
+            const alias = String(latestState.email || '').trim();
+            if (alias) {
+              await markGmailCodeAliasUsed(latestState, alias);
+              await addLog(`GmailCode 别名 ${alias} 已通过 API 标记为已使用。`, 'ok');
+            }
           }
           const localhostPrefix = buildLocalhostCleanupPrefix(payload.localhostUrl);
           if (localhostPrefix) {
