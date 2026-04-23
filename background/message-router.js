@@ -40,6 +40,7 @@
       getPendingAutoRunTimerPlan,
       getSourceLabel,
       getState,
+      getTabId,
       getStopRequested,
       handleAutoRunLoopUnhandledError,
       importSettingsBundle,
@@ -49,9 +50,8 @@
       isHotmailProvider,
       isLocalhostOAuthCallbackUrl,
       isLuckmailProvider,
-      isGmailCodeProvider,
-      markGmailCodeAliasUsed,
       isStopError,
+      isTabAlive,
       launchAutoRunTimerPlan,
       listIcloudAliases,
       listLuckmailPurchasesForManagement,
@@ -110,6 +110,23 @@
       return appendAccountRunRecord(status, state, reason);
     }
 
+    async function ensureManualStepPrerequisites(step) {
+      if (step !== 4) {
+        return;
+      }
+
+      const signupTabId = typeof getTabId === 'function'
+        ? await getTabId('signup-page')
+        : null;
+      const signupTabAlive = signupTabId && typeof isTabAlive === 'function'
+        ? await isTabAlive('signup-page')
+        : Boolean(signupTabId);
+
+      if (!signupTabId || !signupTabAlive) {
+        throw new Error('手动执行步骤 4 前，请先执行步骤 1 或步骤 2，确保认证页仍然打开并停留在验证码页。');
+      }
+    }
+
     async function handleStepData(step, payload) {
       switch (step) {
         case 1: {
@@ -123,6 +140,8 @@
           if (payload.sub2apiGroupId !== undefined) updates.sub2apiGroupId = payload.sub2apiGroupId || null;
           if (payload.sub2apiDraftName !== undefined) updates.sub2apiDraftName = payload.sub2apiDraftName || null;
           if (payload.sub2apiProxyId !== undefined) updates.sub2apiProxyId = payload.sub2apiProxyId || null;
+          if (payload.codex2apiSessionId !== undefined) updates.codex2apiSessionId = payload.codex2apiSessionId || null;
+          if (payload.codex2apiOAuthState !== undefined) updates.codex2apiOAuthState = payload.codex2apiOAuthState || null;
           if (Object.keys(updates).length) {
             await setState(updates);
           }
@@ -203,13 +222,6 @@
             }
             await clearLuckmailRuntimeState({ clearEmail: true });
             await addLog('当前 LuckMail 邮箱运行态已清空，下轮将优先复用未用邮箱或重新购买邮箱。', 'ok');
-          }
-          if (isGmailCodeProvider(latestState)) {
-            const alias = String(latestState.email || '').trim();
-            if (alias) {
-              await markGmailCodeAliasUsed(latestState, alias);
-              await addLog(`GmailCode 别名 ${alias} 已通过 API 标记为已使用。`, 'ok');
-            }
           }
           const localhostPrefix = buildLocalhostCleanupPrefix(payload.localhostUrl);
           if (localhostPrefix) {
@@ -411,6 +423,9 @@
             await ensureManualInteractionAllowed('手动执行步骤');
           }
           const step = message.payload.step;
+          if (message.source === 'sidepanel') {
+            await ensureManualStepPrerequisites(step);
+          }
           if (message.source === 'sidepanel') {
             await invalidateDownstreamAfterStepRestart(step, { logLabel: `步骤 ${step} 重新执行` });
           }

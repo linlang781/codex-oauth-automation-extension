@@ -150,8 +150,6 @@ test('signup flow helper reuses existing managed alias email when it is still co
     isReusableGeneratedAliasEmail: (_state, email) => email === 'demo+saved@gmail.com',
     isHotmailProvider: () => false,
     isLuckmailProvider: () => false,
-    isGmailCodeProvider: () => false,
-    fetchGmailCodeAlias: async () => ({ alias: '' }),
     isSignupEmailVerificationPageUrl: () => false,
     isSignupPasswordPageUrl: () => true,
     reuseOrCreateTab: async () => 21,

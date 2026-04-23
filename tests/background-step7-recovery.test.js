@@ -91,6 +91,10 @@ test('step 8 submits login verification directly without replaying step 7', asyn
 
 test('step 8 uses a fixed 10-minute lookback window and disables resend interval for 2925 mailbox polling', async () => {
   let capturedOptions = null;
+  let ensureCalls = 0;
+  let ensureOptions = null;
+  const tabUpdates = [];
+  const tabReuses = [];
   const realDateNow = Date.now;
   Date.now = () => 900000;
 
@@ -98,11 +102,17 @@ test('step 8 uses a fixed 10-minute lookback window and disables resend interval
     addLog: async () => {},
     chrome: {
       tabs: {
-        update: async () => {},
+        update: async (tabId, payload) => {
+          tabUpdates.push({ tabId, payload });
+        },
       },
     },
     CLOUDFLARE_TEMP_EMAIL_PROVIDER: 'cloudflare-temp-email',
     confirmCustomVerificationStepBypass: async () => {},
+    ensureMail2925MailboxSession: async (options) => {
+      ensureCalls += 1;
+      ensureOptions = options;
+    },
     ensureStep8VerificationPageReady: async () => ({ state: 'verification_page' }),
     rerunStep7ForStep8Recovery: async () => {},
     getOAuthFlowRemainingMs: async () => 8000,
@@ -114,7 +124,15 @@ test('step 8 uses a fixed 10-minute lookback window and disables resend interval
       url: 'https://2925.com',
       navigateOnReuse: false,
     }),
-    getState: async () => ({ email: 'user@example.com', password: 'secret' }),
+    getState: async () => ({
+      email: 'user@example.com',
+      password: 'secret',
+      mail2925UseAccountPool: true,
+      currentMail2925AccountId: 'acc-1',
+      mail2925Accounts: [
+        { id: 'acc-1', email: 'pool-user@2925.com' },
+      ],
+    }),
     getTabId: async (sourceName) => (sourceName === 'signup-page' ? 1 : 2),
     HOTMAIL_PROVIDER: 'hotmail-api',
     isTabAlive: async () => true,
@@ -123,7 +141,9 @@ test('step 8 uses a fixed 10-minute lookback window and disables resend interval
     resolveVerificationStep: async (_step, _state, _mail, options) => {
       capturedOptions = options;
     },
-    reuseOrCreateTab: async () => {},
+    reuseOrCreateTab: async (source, url) => {
+      tabReuses.push({ source, url });
+    },
     setState: async () => {},
     setStepStatus: async () => {},
     shouldUseCustomRegistrationEmail: () => false,
@@ -137,11 +157,28 @@ test('step 8 uses a fixed 10-minute lookback window and disables resend interval
       email: 'user@example.com',
       password: 'secret',
       oauthUrl: 'https://oauth.example/latest',
+      mail2925UseAccountPool: true,
+      currentMail2925AccountId: 'acc-1',
+      mail2925Accounts: [
+        { id: 'acc-1', email: 'pool-user@2925.com' },
+      ],
     });
   } finally {
     Date.now = realDateNow;
   }
 
+  assert.equal(ensureCalls, 1);
+  assert.deepStrictEqual(ensureOptions, {
+    accountId: 'acc-1',
+    forceRelogin: false,
+    allowLoginWhenOnLoginPage: true,
+    expectedMailboxEmail: 'pool-user@2925.com',
+    actionLabel: 'Step 8: ensure 2925 mailbox session',
+  });
+  assert.deepStrictEqual(tabReuses, []);
+  assert.deepStrictEqual(tabUpdates, [
+    { tabId: 1, payload: { active: true } },
+  ]);
   assert.equal(capturedOptions.filterAfterTimestamp, 300000);
   assert.equal(capturedOptions.resendIntervalMs, 0);
   assert.equal(capturedOptions.targetEmail, '');

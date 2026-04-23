@@ -13,8 +13,6 @@
       isReusableGeneratedAliasEmail,
       isHotmailProvider,
       isLuckmailProvider,
-      isGmailCodeProvider,
-      fetchGmailCodeAlias,
       isSignupEmailVerificationPageUrl,
       isSignupPasswordPageUrl,
       reuseOrCreateTab,
@@ -200,9 +198,6 @@
       } else if (isLuckmailProvider(state)) {
         const purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
         resolvedEmail = purchase.email_address;
-      } else if (isGmailCodeProvider(state)) {
-        const aliasResult = await fetchGmailCodeAlias(state);
-        resolvedEmail = aliasResult.alias;
       } else if (isGeneratedAliasProvider(state)) {
         if (Boolean(state?.mail2925UseAccountPool)
           && String(state?.mailProvider || '').trim().toLowerCase() === '2925'

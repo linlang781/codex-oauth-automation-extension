@@ -33,7 +33,6 @@ importScripts(
   'luckmail-utils.js',
   'cloudflare-temp-email-utils.js',
   'icloud-utils.js',
-  'gmail-code-utils.js',
   'content/activation-utils.js'
 );
 
@@ -127,19 +126,6 @@ const {
 const {
   isRecoverableStep9AuthFailure,
 } = self.MultiPageActivationUtils;
-const {
-  DEFAULT_GMAIL_CODE_BASE_URL,
-  DEFAULT_GMAIL_CODE_PROJECT: DEFAULT_GMAIL_CODE_PROJECT_NAME,
-  buildGmailCodeAliasUrl,
-  buildGmailCodeFetchCodeUrl,
-  buildGmailCodeMarkAliasUrl,
-  normalizeGmailCodeAliasResponse,
-  normalizeGmailCodeAuthToken,
-  normalizeGmailCodeBaseUrl,
-  normalizeGmailCodeFetchCodeResponse,
-  normalizeGmailCodeProject,
-  normalizeGmailCodeTimeWindow,
-} = self.GmailCodeUtils;
 
 const LOG_PREFIX = '[MultiPage:bg]';
 const DUCK_AUTOFILL_URL = 'https://duckduckgo.com/email/settings/autofill';
@@ -157,34 +143,20 @@ const HOTMAIL_PROVIDER = 'hotmail-api';
 const LUCKMAIL_PROVIDER = 'luckmail-api';
 const CLOUDFLARE_TEMP_EMAIL_PROVIDER = 'cloudflare-temp-email';
 const CLOUDFLARE_TEMP_EMAIL_GENERATOR = 'cloudflare-temp-email';
-const GMAIL_CODE_PROVIDER = 'gmail-code-api';
 const HOTMAIL_MAILBOXES = ['INBOX', 'Junk'];
 const STOP_ERROR_MESSAGE = '流程已被用户停止。';
 const CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX = 'CF_SECURITY_BLOCKED::';
 const CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE = '您已触发Cloudflare 安全防护系统，已完全停止流程，请不要短时间内多次进行重新发送验证码，连续刷新、反复点击重试会加重风控；请先关闭页面等待 15-30 分钟，让系统的临时限制自动解除。或者更换浏览器';
+const BROWSER_SWITCH_REQUIRED_ERROR_PREFIX = 'BROWSER_SWITCH_REQUIRED::';
 const HUMAN_STEP_DELAY_MIN = 700;
 const HUMAN_STEP_DELAY_MAX = 2200;
-const STEP6_MAX_ATTEMPTS = 2;
-const STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS = 2;
-const STEP_ENTER_DELAY_MIN_SECONDS = 0;
-const STEP_ENTER_DELAY_MAX_SECONDS = 600;
-const DEFAULT_STEP_ENTER_DELAY_SECONDS = 5;
-const DEFAULT_STEP_ENTER_DELAYS = Object.freeze({
-  1: 1,
-  2: 5,
-  3: 5,
-  4: 5,
-  5: 5,
-  6: 5,
-  7: 5,
-  8: 15,
-  9: 5,
-  10: 5,
-});
-const OAUTH_FLOW_TIMEOUT_MS = 6 * 60 * 1000;
+const STEP6_MAX_ATTEMPTS = 3;
+const STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS = 8;
+const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
 const SUB2API_STEP1_RESPONSE_TIMEOUT_MS = 90000;
 const SUB2API_STEP9_RESPONSE_TIMEOUT_MS = 120000;
 const DEFAULT_SUB2API_URL = 'https://sub2api.hisence.fun/admin/accounts';
+const DEFAULT_CODEX2API_URL = 'http://localhost:8080/admin/accounts';
 const DEFAULT_SUB2API_GROUP_NAME = 'codex';
 const DEFAULT_SUB2API_PROXY_NAME = '';
 const DEFAULT_SUB2API_REDIRECT_URI = 'http://localhost:1455/auth/callback';
@@ -281,6 +253,8 @@ const PERSISTED_SETTING_DEFAULTS = {
   sub2apiPassword: '',
   sub2apiGroupName: DEFAULT_SUB2API_GROUP_NAME,
   sub2apiDefaultProxyName: DEFAULT_SUB2API_PROXY_NAME,
+  codex2apiUrl: DEFAULT_CODEX2API_URL,
+  codex2apiAdminKey: '',
   customPassword: '',
   autoRunSkipFailures: false,
   autoRunFallbackThreadIntervalMinutes: 0,
@@ -288,7 +262,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   autoRunDelayMinutes: 30,
   autoStepDelaySeconds: null,
   verificationResendCount: DEFAULT_VERIFICATION_RESEND_COUNT,
-  mailProvider: 'gmail-code-api',
+  mailProvider: '163',
   mail2925Mode: DEFAULT_MAIL_2925_MODE,
   mail2925UseAccountPool: false,
   emailGenerator: 'duck',
@@ -298,6 +272,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   accountRunHistoryHelperBaseUrl: DEFAULT_ACCOUNT_RUN_HISTORY_HELPER_BASE_URL,
   gmailBaseEmail: '',
   mail2925BaseEmail: '',
+  currentMail2925AccountId: '',
   emailPrefix: '',
   inbucketHost: '',
   inbucketMailbox: '',
@@ -310,13 +285,11 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudflareTempEmailAdminAuth: '',
   cloudflareTempEmailCustomAuth: '',
   cloudflareTempEmailReceiveMailbox: '',
+  cloudflareTempEmailUseRandomSubdomain: false,
   cloudflareTempEmailDomain: '',
   cloudflareTempEmailDomains: [],
   hotmailAccounts: [],
   mail2925Accounts: [],
-  gmailCodeApiAuthToken: 'linlang781456868',
-  gmailCodeApiBaseUrl: '',
-  stepEnterDelayOverrides: null,
 };
 
 const PERSISTED_SETTING_KEYS = Object.keys(PERSISTED_SETTING_DEFAULTS);
@@ -360,6 +333,8 @@ const DEFAULT_STATE = {
   sub2apiGroupId: null, // SUB2API 目标分组 ID。
   sub2apiDraftName: null, // SUB2API 本轮预生成的账号名称。
   sub2apiProxyId: null, // SUB2API 本轮使用的代理 ID。
+  codex2apiSessionId: null, // Codex2API OAuth 会话 ID。
+  codex2apiOAuthState: null, // Codex2API OAuth state。
   flowStartTime: null, // 当前流程开始时间。
   tabRegistry: {}, // 程序维护的标签页注册表。
   sourceLastUrls: {}, // 各来源页面最近一次打开的地址记录。
@@ -483,7 +458,7 @@ function normalizeRunCount(value) {
   if (!Number.isFinite(numeric)) {
     return 1;
   }
-  return Math.min(50, Math.max(1, Math.floor(numeric)));
+  return Math.max(1, Math.floor(numeric));
 }
 
 function normalizeAutoRunTimerKind(value = '') {
@@ -684,7 +659,14 @@ function normalizeEmailGenerator(value = '') {
 }
 
 function normalizePanelMode(value = '') {
-  return String(value || '').trim().toLowerCase() === 'sub2api' ? 'sub2api' : 'cpa';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sub2api') {
+    return 'sub2api';
+  }
+  if (normalized === 'codex2api') {
+    return 'codex2api';
+  }
+  return 'cpa';
 }
 
 function normalizeMailProvider(value = '') {
@@ -696,7 +678,6 @@ function normalizeMailProvider(value = '') {
     case HOTMAIL_PROVIDER:
     case LUCKMAIL_PROVIDER:
     case CLOUDFLARE_TEMP_EMAIL_PROVIDER:
-    case GMAIL_CODE_PROVIDER:
     case '163':
     case '163-vip':
     case 'qq':
@@ -861,6 +842,7 @@ function getCloudflareTempEmailConfig(state = {}) {
     adminAuth: String(state.cloudflareTempEmailAdminAuth || ''),
     customAuth: String(state.cloudflareTempEmailCustomAuth || ''),
     receiveMailbox: normalizeCloudflareTempEmailReceiveMailbox(state.cloudflareTempEmailReceiveMailbox),
+    useRandomSubdomain: Boolean(state.cloudflareTempEmailUseRandomSubdomain),
     domain: normalizeCloudflareTempEmailDomain(state.cloudflareTempEmailDomain),
     domains: normalizeCloudflareTempEmailDomains(state.cloudflareTempEmailDomains),
   };
@@ -886,37 +868,6 @@ function resolveCloudflareTempEmailPollTargetEmail(state = {}, pollPayload = {},
   return normalizeCloudflareTempEmailReceiveMailbox(state.email);
 }
 
-function normalizeStepEnterDelaySeconds(value, fallback = DEFAULT_STEP_ENTER_DELAY_SECONDS) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return fallback;
-  }
-  const floored = Math.floor(numeric);
-  if (floored < STEP_ENTER_DELAY_MIN_SECONDS) return STEP_ENTER_DELAY_MIN_SECONDS;
-  if (floored > STEP_ENTER_DELAY_MAX_SECONDS) return STEP_ENTER_DELAY_MAX_SECONDS;
-  return floored;
-}
-
-function normalizeStepEnterDelayOverrides(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const result = {};
-  for (const rawKey of Object.keys(value)) {
-    const stepId = Number(rawKey);
-    if (!Number.isInteger(stepId) || stepId <= 0) continue;
-    if (!(stepId in DEFAULT_STEP_ENTER_DELAYS)) continue;
-    result[stepId] = normalizeStepEnterDelaySeconds(value[rawKey], DEFAULT_STEP_ENTER_DELAYS[stepId]);
-  }
-  return result;
-}
-
-function getStepEnterDelaySeconds(state, step) {
-  const overrides = normalizeStepEnterDelayOverrides(state?.stepEnterDelayOverrides);
-  if (step in overrides) {
-    return overrides[step];
-  }
-  return DEFAULT_STEP_ENTER_DELAYS[step] ?? DEFAULT_STEP_ENTER_DELAY_SECONDS;
-}
-
 function normalizePersistentSettingValue(key, value) {
   switch (key) {
     case 'panelMode':
@@ -936,6 +887,10 @@ function normalizePersistentSettingValue(key, value) {
     case 'sub2apiGroupName':
       return String(value || '').trim();
     case 'sub2apiDefaultProxyName':
+      return String(value || '').trim();
+    case 'codex2apiUrl':
+      return normalizeCodex2ApiUrl(value);
+    case 'codex2apiAdminKey':
       return String(value || '').trim();
     case 'customPassword':
       return String(value || '');
@@ -960,6 +915,7 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeEmailGenerator(value);
     case 'autoDeleteUsedIcloudAlias':
     case 'accountRunHistoryTextEnabled':
+    case 'cloudflareTempEmailUseRandomSubdomain':
       return Boolean(value);
     case 'icloudHostPreference':
       return normalizeIcloudHost(value) || 'auto';
@@ -967,6 +923,7 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeAccountRunHistoryHelperBaseUrl(value);
     case 'gmailBaseEmail':
     case 'mail2925BaseEmail':
+    case 'currentMail2925AccountId':
     case 'emailPrefix':
       return String(value || '').trim();
     case 'inbucketHost':
@@ -998,12 +955,6 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeHotmailAccounts(value);
     case 'mail2925Accounts':
       return normalizeMail2925Accounts(value);
-    case 'gmailCodeApiAuthToken':
-      return normalizeGmailCodeAuthToken(value);
-    case 'gmailCodeApiBaseUrl':
-      return normalizeGmailCodeBaseUrl(value) === DEFAULT_GMAIL_CODE_BASE_URL ? '' : normalizeGmailCodeBaseUrl(value);
-    case 'stepEnterDelayOverrides':
-      return normalizeStepEnterDelayOverrides(value);
     default:
       return value;
   }
@@ -1548,13 +1499,6 @@ function isLuckmailProvider(stateOrProvider) {
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
   return provider === LUCKMAIL_PROVIDER;
-}
-
-function isGmailCodeProvider(stateOrProvider) {
-  const provider = typeof stateOrProvider === 'string'
-    ? stateOrProvider
-    : stateOrProvider?.mailProvider;
-  return provider === GMAIL_CODE_PROVIDER;
 }
 
 function isCustomMailProvider(stateOrProvider) {
@@ -2210,11 +2154,21 @@ function isGeneratedAliasProvider(stateOrProvider, mail2925Mode = undefined) {
   const provider = typeof stateOrProvider === 'string'
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
+  const resolvedMail2925Mode = mail2925Mode !== undefined
+    ? normalizeMail2925Mode(mail2925Mode)
+    : getMail2925Mode(stateOrProvider);
   const utils = (typeof self !== 'undefined' ? self : globalThis).MultiPageManagedAliasUtils || null;
+  if (utils?.usesManagedAliasGeneration) {
+    return utils.usesManagedAliasGeneration(provider, { mail2925Mode: resolvedMail2925Mode });
+  }
   if (utils?.isManagedAliasProvider) {
+    if (String(provider || '').trim().toLowerCase() === '2925') {
+      return utils.isManagedAliasProvider(provider) && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE;
+    }
     return utils.isManagedAliasProvider(provider);
   }
-  return provider === GMAIL_PROVIDER || provider === '2925';
+  return provider === GMAIL_PROVIDER
+    || (provider === '2925' && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE);
 }
 
 function shouldUseCustomRegistrationEmail(state = {}) {
@@ -2357,11 +2311,21 @@ function isGeneratedAliasProvider(stateOrProvider, mail2925Mode = undefined) {
   const provider = typeof stateOrProvider === 'string'
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
+  const resolvedMail2925Mode = mail2925Mode !== undefined
+    ? normalizeMail2925Mode(mail2925Mode)
+    : getMail2925Mode(stateOrProvider);
   const utils = getManagedAliasUtils();
+  if (utils?.usesManagedAliasGeneration) {
+    return utils.usesManagedAliasGeneration(provider, { mail2925Mode: resolvedMail2925Mode });
+  }
   if (utils?.isManagedAliasProvider) {
+    if (String(provider || '').trim().toLowerCase() === '2925') {
+      return utils.isManagedAliasProvider(provider) && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE;
+    }
     return utils.isManagedAliasProvider(provider);
   }
-  return provider === GMAIL_PROVIDER || provider === '2925';
+  return provider === GMAIL_PROVIDER
+    || (provider === '2925' && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE);
 }
 
 function shouldUseCustomRegistrationEmail(state = {}) {
@@ -3110,102 +3074,6 @@ async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
   throw lastError || new Error(`步骤 ${step}：未在 LuckMail 邮箱中找到新的匹配验证码。`);
 }
 
-async function fetchGmailCodeAlias(state) {
-  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
-  if (!authToken) {
-    throw new Error('GmailCode 服务未配置 Auth Token，请在邮箱服务设置中填写。');
-  }
-  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
-  const project = DEFAULT_GMAIL_CODE_PROJECT_NAME;
-  const url = buildGmailCodeAliasUrl(baseUrl, project, authToken);
-  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  const data = await response.json();
-  const normalized = normalizeGmailCodeAliasResponse(data);
-  if (!normalized) {
-    const errorMsg = data?.error || '未知错误';
-    throw new Error(`GmailCode 获取别名邮箱失败：${errorMsg}`);
-  }
-  return normalized;
-}
-
-async function markGmailCodeAliasUsed(state, alias) {
-  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
-  if (!authToken || !alias) return;
-  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
-  const markUrl = buildGmailCodeMarkAliasUrl(baseUrl);
-  try {
-    await fetch(markUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        auth_token: authToken,
-        mail: alias,
-        project: DEFAULT_GMAIL_CODE_PROJECT_NAME,
-        status: '1',
-      }).toString(),
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch (err) {
-    await addLog(`GmailCode 标记别名已使用失败（${alias}）：${err.message}`, 'warn');
-  }
-}
-
-async function pollGmailCodeVerificationCode(step, state, pollPayload = {}) {
-  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
-  if (!authToken) {
-    throw new Error('GmailCode 服务未配置 Auth Token，请在邮箱服务设置中填写。');
-  }
-
-  const mail = String(state.email || '').trim();
-  if (!mail) {
-    throw new Error(`步骤 ${step}：GmailCode 轮询前缺少注册邮箱地址。`);
-  }
-
-  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
-  const project = DEFAULT_GMAIL_CODE_PROJECT_NAME;
-  const timeWindow = normalizeGmailCodeTimeWindow(pollPayload.timeWindow || '30m');
-  const maxAttempts = Math.max(1, Number(pollPayload.maxAttempts) || 5);
-  const intervalMs = Math.max(1000, Number(pollPayload.intervalMs) || 3000);
-
-  let lastError = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    throwIfStopped();
-    await addLog(`步骤 ${step}：正在通过 GmailCode API 轮询验证码（${attempt}/${maxAttempts}）...`, 'info');
-
-    try {
-      const url = buildGmailCodeFetchCodeUrl(baseUrl, project, mail, authToken, timeWindow);
-      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      const data = await response.json();
-      const normalized = normalizeGmailCodeFetchCodeResponse(data);
-
-      if (normalized?.ok && normalized.code) {
-        return {
-          ok: true,
-          code: normalized.code,
-          emailTimestamp: Date.now(),
-          mailId: normalized.request_id || '',
-        };
-      }
-
-      const reason = normalized?.error || 'code_not_found';
-      lastError = new Error(`步骤 ${step}：GmailCode 暂未找到验证码（${reason}）（${attempt}/${maxAttempts}）。`);
-      await addLog(lastError.message, attempt === maxAttempts ? 'warn' : 'info');
-    } catch (err) {
-      if (isStopError(err)) {
-        throw err;
-      }
-      lastError = err;
-      await addLog(`步骤 ${step}：GmailCode 轮询失败：${err.message}`, 'warn');
-    }
-
-    if (attempt < maxAttempts) {
-      await sleepWithStop(intervalMs);
-    }
-  }
-
-  throw lastError || new Error(`步骤 ${step}：未在 GmailCode 邮箱中找到新的匹配验证码。`);
-}
-
 function summarizeCloudflareTempEmailMessagesForLog(messages) {
   return (messages || [])
     .slice()
@@ -3774,11 +3642,31 @@ function normalizeSub2ApiUrl(rawUrl) {
   return parsed.toString();
 }
 
+function normalizeCodex2ApiUrl(rawUrl) {
+  if (typeof navigationUtils !== 'undefined' && navigationUtils?.normalizeCodex2ApiUrl) {
+    return navigationUtils.normalizeCodex2ApiUrl(rawUrl);
+  }
+  const input = (rawUrl || '').trim() || DEFAULT_CODEX2API_URL;
+  const withProtocol = /^https?:\/\//i.test(input) ? input : `http://${input}`;
+  const parsed = new URL(withProtocol);
+  if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/admin') {
+    parsed.pathname = '/admin/accounts';
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
 function getPanelMode(state = {}) {
   if (typeof navigationUtils !== 'undefined' && navigationUtils?.getPanelMode) {
     return navigationUtils.getPanelMode(state);
   }
-  return state.panelMode === 'sub2api' ? 'sub2api' : 'cpa';
+  if (state.panelMode === 'sub2api') {
+    return 'sub2api';
+  }
+  if (state.panelMode === 'codex2api') {
+    return 'codex2api';
+  }
+  return 'cpa';
 }
 
 function getPanelModeLabel(modeOrState) {
@@ -3786,7 +3674,13 @@ function getPanelModeLabel(modeOrState) {
     return navigationUtils.getPanelModeLabel(modeOrState);
   }
   const mode = typeof modeOrState === 'string' ? modeOrState : getPanelMode(modeOrState);
-  return mode === 'sub2api' ? 'SUB2API' : 'CPA';
+  if (mode === 'sub2api') {
+    return 'SUB2API';
+  }
+  if (mode === 'codex2api') {
+    return 'Codex2API';
+  }
+  return 'CPA';
 }
 
 function isSignupPageHost(hostname = '') {
@@ -4090,6 +3984,7 @@ function isRetryableContentScriptTransportError(error) {
 }
 
 const navigationUtils = self.MultiPageBackgroundNavigationUtils?.createNavigationUtils({
+  DEFAULT_CODEX2API_URL,
   DEFAULT_SUB2API_URL,
   normalizeLocalCpaStep9Mode,
 });
@@ -4154,6 +4049,17 @@ function getTerminalSecurityBlockedTitle(error) {
   return 'Cloudflare 风控拦截';
 }
 
+function isBrowserSwitchRequiredError(error) {
+  return getErrorMessage(error).startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX);
+}
+
+function getBrowserSwitchRequiredMessage(error) {
+  const message = getErrorMessage(error);
+  return message.startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX)
+    ? message.slice(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX.length).trim()
+    : message;
+}
+
 function broadcastSecurityBlockedAlert(title = '流程已完全停止', message = CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE, alertText = '检测到 Cloudflare 风控，请暂停当前操作。') {
   chrome.runtime.sendMessage({
     type: 'SECURITY_BLOCKED_ALERT',
@@ -4174,6 +4080,13 @@ async function handleCloudflareSecurityBlocked(error) {
   const alertText = getTerminalSecurityBlockedAlertText(error);
   await requestStop({ logMessage: message });
   broadcastSecurityBlockedAlert(title, message, alertText);
+  return message;
+}
+
+async function handleBrowserSwitchRequired(error) {
+  const message = getBrowserSwitchRequiredMessage(error)
+    || '检测到第 10 步的特殊冲突状态，请更换浏览器后重新进行注册登录。';
+  await requestStop({ logMessage: message });
   return message;
 }
 
@@ -4265,6 +4178,8 @@ function getDownstreamStateResets(step) {
       sub2apiOAuthState: null,
       sub2apiGroupId: null,
       sub2apiDraftName: null,
+      codex2apiSessionId: null,
+      codex2apiOAuthState: null,
       flowStartTime: null,
       password: null,
       lastEmailTimestamp: null,
@@ -5050,6 +4965,8 @@ async function handleStepData(step, payload) {
       if (payload.sub2apiGroupId !== undefined) updates.sub2apiGroupId = payload.sub2apiGroupId || null;
       if (payload.sub2apiDraftName !== undefined) updates.sub2apiDraftName = payload.sub2apiDraftName || null;
       if (payload.sub2apiProxyId !== undefined) updates.sub2apiProxyId = payload.sub2apiProxyId || null;
+      if (payload.codex2apiSessionId !== undefined) updates.codex2apiSessionId = payload.codex2apiSessionId || null;
+      if (payload.codex2apiOAuthState !== undefined) updates.codex2apiOAuthState = payload.codex2apiOAuthState || null;
       if (Object.keys(updates).length) {
         await setState(updates);
       }
@@ -5466,12 +5383,6 @@ async function executeStep(step, options = {}) {
       await setState({ flowStartTime: Date.now() });
     }
 
-    const enterDelaySeconds = getStepEnterDelaySeconds(state, step);
-    if (enterDelaySeconds > 0) {
-      await addLog(`步骤 ${step}：等待 ${enterDelaySeconds} 秒让页面/接口加载就绪后再执行操作...`, 'info');
-      await sleepWithStop(enterDelaySeconds * 1000);
-    }
-
     await stepRegistry.executeStep(step, state);
   } catch (err) {
     executionError = err;
@@ -5484,6 +5395,10 @@ async function executeStep(step, options = {}) {
     }
     if (isTerminalSecurityBlockedError(err)) {
       await handleCloudflareSecurityBlocked(err);
+      throw new Error(STOP_ERROR_MESSAGE);
+    }
+    if (isBrowserSwitchRequiredError(err)) {
+      await handleBrowserSwitchRequired(err);
       throw new Error(STOP_ERROR_MESSAGE);
     }
     if (!(deferRetryableTransportError && doesStepUseCompletionSignal(step) && isRetryableContentScriptTransportError(err))) {
@@ -5583,6 +5498,7 @@ const mail2925SessionManager = self.MultiPageBackgroundMail2925Session?.createMa
   sleepWithStop,
   throwIfStopped,
   upsertMail2925AccountInList,
+  waitForTabComplete,
   waitForTabUrlMatch,
 });
 
@@ -5655,12 +5571,10 @@ const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGenerat
   DUCK_AUTOFILL_URL,
   fetch,
   fetchIcloudHideMyEmail,
-  fetchGmailCodeAlias,
   getCloudflareTempEmailAddressFromResponse,
   getCloudflareTempEmailConfig,
   getState,
   ensureMail2925AccountForFlow,
-  isGmailCodeProvider,
   joinCloudflareTempEmailUrl,
   normalizeCloudflareDomain,
   normalizeCloudflareTempEmailAddress,
@@ -5813,11 +5727,9 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   getStopRequested: () => stopRequested,
   hasSavedProgress,
   isAddPhoneAuthFailure,
-  isGmailCodeProvider,
   isRestartCurrentAttemptError,
   isSignupUserAlreadyExistsFailure,
   isStopError,
-  markGmailCodeAliasUsed,
   launchAutoRunTimerPlan,
   normalizeAutoRunFallbackThreadIntervalMinutes,
   persistAutoRunTimerPlan,
@@ -6323,6 +6235,7 @@ const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   closeConflictingTabsForSource,
   ensureContentScriptReadyOnTab,
   getPanelMode,
+  normalizeCodex2ApiUrl,
   normalizeSub2ApiUrl,
   rememberSourceLastUrl,
   sendToContentScript,
@@ -6345,8 +6258,6 @@ const signupFlowHelpers = self.MultiPageSignupFlowHelpers?.createSignupFlowHelpe
   isSignupEmailVerificationPageUrl,
   isHotmailProvider,
   isLuckmailProvider,
-  isGmailCodeProvider,
-  fetchGmailCodeAlias,
   isSignupPasswordPageUrl,
   isTabAlive,
   reuseOrCreateTab,
@@ -6374,11 +6285,9 @@ const verificationFlowHelpers = self.MultiPageBackgroundVerificationFlow?.create
   isMail2925LimitReachedError,
   isStopError,
   LUCKMAIL_PROVIDER,
-  GMAIL_CODE_PROVIDER,
   MAIL_2925_VERIFICATION_INTERVAL_MS,
   MAIL_2925_VERIFICATION_MAX_ATTEMPTS,
   pollCloudflareTempEmailVerificationCode,
-  pollGmailCodeVerificationCode,
   pollHotmailVerificationCode,
   pollLuckmailVerificationCode,
   sendToContentScript,
@@ -6430,7 +6339,6 @@ const step4Executor = self.MultiPageBackgroundStep4?.createStep4Executor({
   HOTMAIL_PROVIDER,
   isTabAlive,
   LUCKMAIL_PROVIDER,
-  GMAIL_CODE_PROVIDER,
   CLOUDFLARE_TEMP_EMAIL_PROVIDER,
   resolveVerificationStep: verificationFlowHelpers.resolveVerificationStep,
   reuseOrCreateTab,
@@ -6483,7 +6391,6 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   isTabAlive,
   isVerificationMailPollingError,
   LUCKMAIL_PROVIDER,
-  GMAIL_CODE_PROVIDER,
   resolveVerificationStep: verificationFlowHelpers.resolveVerificationStep,
   rerunStep7ForStep8Recovery: (...args) => rerunStep7ForStep8Recovery(...args),
   reuseOrCreateTab,
@@ -6504,6 +6411,7 @@ const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
   getTabId,
   isLocalhostOAuthCallbackUrl,
   isTabAlive,
+  normalizeCodex2ApiUrl,
   normalizeSub2ApiUrl,
   rememberSourceLastUrl,
   reuseOrCreateTab,
@@ -6570,6 +6478,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   getPendingAutoRunTimerPlan,
   getSourceLabel,
   getState,
+  getTabId,
   getStopRequested: () => stopRequested,
   handleCloudflareSecurityBlocked,
   handleAutoRunLoopUnhandledError,
@@ -6580,9 +6489,8 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   isHotmailProvider,
   isLocalhostOAuthCallbackUrl,
   isLuckmailProvider,
-  isGmailCodeProvider,
-  markGmailCodeAliasUsed,
   isStopError,
+  isTabAlive,
   launchAutoRunTimerPlan,
   listIcloudAliases,
   listLuckmailPurchasesForManagement,
@@ -6727,9 +6635,6 @@ function getMailConfig(state) {
   if (provider === LUCKMAIL_PROVIDER) {
     return { provider: LUCKMAIL_PROVIDER, label: 'LuckMail（API 购邮）' };
   }
-  if (provider === GMAIL_CODE_PROVIDER) {
-    return { provider: GMAIL_CODE_PROVIDER, label: 'GmailCode（gmail.freeopenai.me）' };
-  }
   if (provider === CLOUDFLARE_TEMP_EMAIL_PROVIDER) {
     return { provider: CLOUDFLARE_TEMP_EMAIL_PROVIDER, label: 'Cloudflare Temp Email' };
   }
@@ -6759,6 +6664,7 @@ function getMailConfig(state) {
   }
   if (provider === '2925') {
     return {
+      provider: '2925',
       source: 'mail-2925',
       url: 'https://2925.com/#/mailList',
       label: '2925 邮箱',
@@ -6956,7 +6862,7 @@ async function runPreStep6CookieCleanup() {
 
 async function refreshOAuthUrlBeforeStep6(state) {
   if (state?.contributionModeExpected && !state?.contributionMode) {
-    throw new Error('步骤 7：当前自动流程预期使用贡献模式，但运行态 contributionMode 已丢失，已阻止回退到普通 CPA / SUB2API 链路。请重新进入贡献模式后再点击自动。');
+    throw new Error('步骤 7：当前自动流程预期使用贡献模式，但运行态 contributionMode 已丢失，已阻止回退到普通 CPA / SUB2API / Codex2API 链路。请重新进入贡献模式后再点击自动。');
   }
   if (state?.contributionMode && contributionOAuthManager?.startContributionFlow) {
     await addLog('步骤 7：contributionMode=true，走公开贡献接口，正在申请 OAuth 登录地址...', 'info');
@@ -6972,7 +6878,7 @@ async function refreshOAuthUrlBeforeStep6(state) {
     await handleStepData(1, { oauthUrl });
     return oauthUrl;
   }
-  await addLog(`步骤 7：contributionMode=false，走普通 CPA / SUB2API 链路（当前面板：${getPanelModeLabel(state)}），正在刷新 OAuth 登录地址...`, 'info');
+  await addLog(`步骤 7：contributionMode=false，走普通 CPA / SUB2API / Codex2API 链路（当前面板：${getPanelModeLabel(state)}），正在刷新 OAuth 登录地址...`, 'info');
   console.log(LOG_PREFIX, '[refreshOAuthUrlBeforeStep6] requesting fresh OAuth directly from panel');
   const refreshResult = await requestOAuthUrlFromPanel(state, { logLabel: '步骤 7' });
   await handleStepData(1, refreshResult);
@@ -7010,7 +6916,7 @@ async function startOAuthFlowTimeoutWindow(options = {}) {
     oauthFlowDeadlineAt: deadlineAt,
     oauthFlowDeadlineSourceUrl: normalizeOAuthFlowSourceUrl(options.oauthUrl),
   });
-  await addLog(`步骤 ${step}：已拿到新的 OAuth 登录地址，开始 6 分钟倒计时。`, 'info');
+  await addLog(`步骤 ${step}：已拿到新的 OAuth 登录地址，开始 ${Math.round(OAUTH_FLOW_TIMEOUT_MS / 60000)} 分钟倒计时。`, 'info');
   return deadlineAt;
 }
 
@@ -7345,7 +7251,6 @@ async function getStep8PageState(tabId, responseTimeoutMs = 1500) {
 async function waitForStep8Ready(tabId, timeoutMs = STEP8_READY_WAIT_TIMEOUT_MS) {
   const start = Date.now();
   let recovered = false;
-  let retryRecovered = false;
 
   while (Date.now() - start < timeoutMs) {
     throwIfStopped();
@@ -7357,20 +7262,9 @@ async function waitForStep8Ready(tabId, timeoutMs = STEP8_READY_WAIT_TIMEOUT_MS)
       throw new Error('步骤 9：认证页进入了手机号页面，当前不是 OAuth 同意页，无法继续自动授权。');
     }
     if (pageState?.retryPage) {
-      await recoverAuthRetryPageOnTab(tabId, {
-        flow: 'auth',
-        logLabel: '步骤 9：检测到认证页重试页，正在点击“重试”恢复',
-        step: 8,
-        timeoutMs: Math.max(1000, Math.min(12000, timeoutMs)),
-      });
-      retryRecovered = true;
-      await sleepWithStop(250);
-      continue;
+      throw new Error(`步骤 9：当前认证页已进入重试页，当前流程将直接报错。URL: ${pageState.url || 'unknown'}`);
     }
     if (pageState?.consentReady) {
-      if (retryRecovered) {
-        await addLog('步骤 9：认证页重试页已恢复，准备重新定位“继续”按钮...', 'info');
-      }
       return pageState;
     }
     if (pageState === null && !recovered) {
@@ -7535,18 +7429,7 @@ async function waitForStep8ClickEffect(tabId, baselineUrl, timeoutMs = STEP8_CLI
       throw new Error('步骤 9：点击“继续”后页面跳到了手机号页面，当前流程无法继续自动授权。');
     }
     if (pageState?.retryPage) {
-      await recoverAuthRetryPageOnTab(tabId, {
-        flow: 'auth',
-        logLabel: '步骤 9：点击“继续”后进入重试页，正在点击“重试”恢复',
-        step: 8,
-        timeoutMs: Math.max(1000, Math.min(12000, timeoutMs)),
-      });
-      return {
-        progressed: false,
-        reason: 'retry_page_recovered',
-        restartCurrentStep: true,
-        url: pageState.url || baselineUrl || '',
-      };
+      throw new Error(`步骤 9：点击“继续”后页面进入认证页重试页，当前流程将直接报错。URL: ${pageState.url || baselineUrl || 'unknown'}`);
     }
     if (pageState === null) {
       if (!recovered) {
@@ -7580,8 +7463,6 @@ function getStep8EffectLabel(effect) {
   switch (effect?.reason) {
     case 'url_changed':
       return `URL 已变化：${effect.url}`;
-    case 'retry_page_recovered':
-      return '页面进入重试页并已恢复，需要重新执行当前步骤';
     case 'page_reloading':
       return '页面正在跳转或重载';
     case 'left_consent_page':
@@ -7698,7 +7579,7 @@ async function executeContributionStep10(state) {
 
 async function executeStep10(state) {
   if (state?.contributionModeExpected && !state?.contributionMode) {
-    throw new Error('步骤 10：当前自动流程预期使用贡献模式，但运行态 contributionMode 已丢失，已阻止回退到普通 CPA / SUB2API 提交。请重新进入贡献模式后再点击自动。');
+    throw new Error('步骤 10：当前自动流程预期使用贡献模式，但运行态 contributionMode 已丢失，已阻止回退到普通 CPA / SUB2API / Codex2API 提交。请重新进入贡献模式后再点击自动。');
   }
   if (state?.contributionMode) {
     return executeContributionStep10(state);

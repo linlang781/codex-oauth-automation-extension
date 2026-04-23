@@ -17,11 +17,9 @@
       isMail2925LimitReachedError,
       isStopError,
       LUCKMAIL_PROVIDER,
-      GMAIL_CODE_PROVIDER,
       MAIL_2925_VERIFICATION_INTERVAL_MS,
       MAIL_2925_VERIFICATION_MAX_ATTEMPTS,
       pollCloudflareTempEmailVerificationCode,
-      pollGmailCodeVerificationCode,
       pollHotmailVerificationCode,
       pollLuckmailVerificationCode,
       sendToContentScript,
@@ -115,12 +113,15 @@
 
     function getVerificationPollPayload(step, state, overrides = {}) {
       const is2925Provider = state?.mailProvider === '2925';
+      const mail2925MatchTargetEmail = is2925Provider
+        && String(state?.mail2925Mode || '').trim().toLowerCase() === 'receive';
       if (step === 4) {
         return {
           filterAfterTimestamp: is2925Provider ? 0 : getHotmailVerificationRequestTimestamp(4, state),
           senderFilters: ['openai', 'noreply', 'verify', 'auth', 'duckduckgo', 'forward'],
           subjectFilters: ['verify', 'verification', 'code', '验证码', 'confirm'],
           targetEmail: state.email,
+          mail2925MatchTargetEmail,
           maxAttempts: is2925Provider ? MAIL_2925_VERIFICATION_MAX_ATTEMPTS : 5,
           intervalMs: is2925Provider ? MAIL_2925_VERIFICATION_INTERVAL_MS : 3000,
           ...overrides,
@@ -132,6 +133,7 @@
         senderFilters: ['openai', 'noreply', 'verify', 'auth', 'chatgpt', 'duckduckgo', 'forward'],
         subjectFilters: ['verify', 'verification', 'code', '验证码', 'confirm', 'login'],
         targetEmail: String(state?.step8VerificationTargetEmail || '').trim() || state.email,
+        mail2925MatchTargetEmail,
         maxAttempts: is2925Provider ? MAIL_2925_VERIFICATION_MAX_ATTEMPTS : 5,
         intervalMs: is2925Provider ? MAIL_2925_VERIFICATION_INTERVAL_MS : 3000,
         ...overrides,
@@ -456,53 +458,6 @@
       throw lastError || new Error(`步骤 ${step}：无法获取新的${getVerificationCodeLabel(step)}验证码。`);
     }
 
-    async function pollGmailCodeVerificationCodeWithResend(step, state, mail, pollOverrides = {}) {
-      const GMAIL_CODE_POLL_INTERVAL_MS = 30000;
-      const GMAIL_CODE_POLL_MAX_ATTEMPTS = 3;
-      const totalWindowSeconds = Math.round((GMAIL_CODE_POLL_INTERVAL_MS * GMAIL_CODE_POLL_MAX_ATTEMPTS) / 1000);
-
-      const buildPayload = () => ({
-        ...getVerificationPollPayload(step, state),
-        intervalMs: GMAIL_CODE_POLL_INTERVAL_MS,
-        maxAttempts: GMAIL_CODE_POLL_MAX_ATTEMPTS,
-        timeWindow: '30m',
-      });
-
-      await addLog(
-        `步骤 ${step}：开始通过 GmailCode API 轮询${getVerificationCodeLabel(step)}验证码（每 30 秒查询一次，最多 ${GMAIL_CODE_POLL_MAX_ATTEMPTS} 次，约 ${totalWindowSeconds} 秒）...`,
-        'info'
-      );
-
-      try {
-        return await pollGmailCodeVerificationCode(step, state, buildPayload());
-      } catch (err) {
-        if (isStopError(err)) throw err;
-        await addLog(
-          `步骤 ${step}：${totalWindowSeconds} 秒内未获取到${getVerificationCodeLabel(step)}验证码，准备点击一次“重新发送验证码”后再次轮询。`,
-          'warn'
-        );
-      }
-
-      try {
-        await requestVerificationCodeResend(step, pollOverrides);
-      } catch (err) {
-        if (isStopError(err)) throw err;
-        throw new Error(`步骤 ${step}：点击“重新发送验证码”失败，跳过本次并进入下一轮：${err.message}`);
-      }
-
-      await addLog(
-        `步骤 ${step}：已点击重新发送，再次通过 GmailCode API 轮询${getVerificationCodeLabel(step)}验证码（每 30 秒查询一次，最多 ${GMAIL_CODE_POLL_MAX_ATTEMPTS} 次，约 ${totalWindowSeconds} 秒）...`,
-        'info'
-      );
-
-      try {
-        return await pollGmailCodeVerificationCode(step, state, buildPayload());
-      } catch (err) {
-        if (isStopError(err)) throw err;
-        throw new Error(`步骤 ${step}：已点击一次重新发送，${totalWindowSeconds} 秒内仍未通过 GmailCode API 获取到${getVerificationCodeLabel(step)}验证码，跳过本次并进入下一轮。`);
-      }
-    }
-
     async function pollFreshVerificationCode(step, state, mail, pollOverrides = {}) {
       const {
         onResendRequestedAt,
@@ -533,9 +488,6 @@
           ...cleanPollOverrides,
         }, cleanPollOverrides, `轮询${getVerificationCodeLabel(step)}验证码邮箱`);
         return pollCloudflareTempEmailVerificationCode(step, state, timedPoll.payload);
-      }
-      if (mail.provider === GMAIL_CODE_PROVIDER) {
-        return pollGmailCodeVerificationCodeWithResend(step, state, mail, cleanPollOverrides);
       }
 
       if (Number(pollOverrides.resendIntervalMs) > 0) {
