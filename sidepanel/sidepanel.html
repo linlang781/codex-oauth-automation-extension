@@ -226,6 +226,7 @@
             <option value="2925">2925 邮箱 (2925.com)</option>
             <option value="gmail">Gmail 邮箱 (mail.google.com)</option>
             <option value="cloudflare-temp-email">Cloudflare Temp Email</option>
+            <option value="gmail-code-api">GmailCode（API 接码）</option>
           </select>
           <button id="btn-mail-login" class="btn btn-outline btn-sm data-inline-btn" type="button" disabled>登录</button>
         </div>
@@ -599,6 +600,25 @@
           </div>
         </div>
         <div id="luckmail-list" class="luckmail-list"></div>
+      </div>
+    </div>
+    <div id="gmail-code-section" class="data-card luckmail-card" style="display:none;">
+      <div class="section-mini-header">
+        <div class="section-mini-copy">
+          <span class="section-label">GmailCode 配置</span>
+        </div>
+      </div>
+      <div class="data-row">
+        <span class="data-label">Auth Token</span>
+        <input type="password" id="input-gmail-code-auth-token" class="data-input mono" placeholder="请输入 GmailCode Auth Token" />
+      </div>
+      <div class="data-row">
+        <span class="data-label">Base URL</span>
+        <input type="text" id="input-gmail-code-base-url" class="data-input mono" placeholder="https://gmail.freeopenai.me（留空使用默认）" />
+      </div>
+      <div class="data-row">
+        <span class="data-label">项目</span>
+        <span class="data-value mono">openai</span>
       </div>
     </div>
     <div id="icloud-section" class="data-card hotmail-card" style="display:none;">

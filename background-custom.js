@@ -25,15 +25,6 @@ const {
   normalizeGmailCodeTimeWindow,
 } = (typeof self !== 'undefined' ? self : globalThis).GmailCodeUtils || {};
 
-// ── 覆盖默认邮件服务商为 gmail-code-api ──────────────────────────────────────
-// PERSISTED_SETTING_DEFAULTS 在 background.js 中定义，这里直接覆盖其值
-
-if (typeof PERSISTED_SETTING_DEFAULTS !== 'undefined') {
-  PERSISTED_SETTING_DEFAULTS.mailProvider = GMAIL_CODE_PROVIDER;
-  PERSISTED_SETTING_DEFAULTS.gmailCodeApiAuthToken = 'linlang781456868';
-  PERSISTED_SETTING_DEFAULTS.gmailCodeApiBaseUrl = '';
-}
-
 // ── Provider 判断 ─────────────────────────────────────────────────────────────
 
 function isGmailCodeProvider(stateOrProvider) {

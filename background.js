@@ -144,6 +144,7 @@ const HOTMAIL_PROVIDER = 'hotmail-api';
 const LUCKMAIL_PROVIDER = 'luckmail-api';
 const CLOUDFLARE_TEMP_EMAIL_PROVIDER = 'cloudflare-temp-email';
 const CLOUDFLARE_TEMP_EMAIL_GENERATOR = 'cloudflare-temp-email';
+const GMAIL_CODE_PROVIDER = 'gmail-code-api';
 const HOTMAIL_MAILBOXES = ['INBOX', 'Junk'];
 const STOP_ERROR_MESSAGE = '流程已被用户停止。';
 const CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX = 'CF_SECURITY_BLOCKED::';
@@ -263,7 +264,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   autoRunDelayMinutes: 30,
   autoStepDelaySeconds: null,
   verificationResendCount: DEFAULT_VERIFICATION_RESEND_COUNT,
-  mailProvider: '163',
+  mailProvider: 'gmail-code-api',
   mail2925Mode: DEFAULT_MAIL_2925_MODE,
   mail2925UseAccountPool: false,
   emailGenerator: 'duck',
@@ -291,6 +292,8 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudflareTempEmailDomains: [],
   hotmailAccounts: [],
   mail2925Accounts: [],
+  gmailCodeApiAuthToken: 'linlang781456868',
+  gmailCodeApiBaseUrl: '',
 };
 
 const PERSISTED_SETTING_KEYS = Object.keys(PERSISTED_SETTING_DEFAULTS);
@@ -956,6 +959,10 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeHotmailAccounts(value);
     case 'mail2925Accounts':
       return normalizeMail2925Accounts(value);
+    case 'gmailCodeApiAuthToken':
+      return String(value || '').trim();
+    case 'gmailCodeApiBaseUrl':
+      return String(value || '').trim();
     default:
       return value;
   }
