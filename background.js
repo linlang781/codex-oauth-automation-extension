@@ -33,6 +33,7 @@ importScripts(
   'luckmail-utils.js',
   'cloudflare-temp-email-utils.js',
   'icloud-utils.js',
+  'gmail-code-utils.js',
   'content/activation-utils.js'
 );
 
@@ -5727,9 +5728,11 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   getStopRequested: () => stopRequested,
   hasSavedProgress,
   isAddPhoneAuthFailure,
+  isGmailCodeProvider: (...args) => (self.customGmailCode?.isGmailCodeProvider || (() => false))(...args),
   isRestartCurrentAttemptError,
   isSignupUserAlreadyExistsFailure,
   isStopError,
+  markGmailCodeAliasUsed: (...args) => (self.customGmailCode?.markGmailCodeAliasUsed || (() => Promise.resolve()))(...args),
   launchAutoRunTimerPlan,
   normalizeAutoRunFallbackThreadIntervalMinutes,
   persistAutoRunTimerPlan,
@@ -7617,3 +7620,5 @@ chrome.runtime.onInstalled.addListener(() => {
 restoreAutoRunTimerIfNeeded().catch((err) => {
   console.error(LOG_PREFIX, 'Failed to restore auto run timer:', err);
 });
+
+importScripts('background-custom.js');
