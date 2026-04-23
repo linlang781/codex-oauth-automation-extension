@@ -127,6 +127,19 @@ const {
 const {
   isRecoverableStep9AuthFailure,
 } = self.MultiPageActivationUtils;
+const {
+  DEFAULT_GMAIL_CODE_BASE_URL,
+  DEFAULT_GMAIL_CODE_PROJECT: DEFAULT_GMAIL_CODE_PROJECT_NAME,
+  buildGmailCodeAliasUrl,
+  buildGmailCodeFetchCodeUrl,
+  buildGmailCodeMarkAliasUrl,
+  normalizeGmailCodeAliasResponse,
+  normalizeGmailCodeAuthToken,
+  normalizeGmailCodeBaseUrl,
+  normalizeGmailCodeFetchCodeResponse,
+  normalizeGmailCodeProject,
+  normalizeGmailCodeTimeWindow,
+} = self.GmailCodeUtils;
 
 const LOG_PREFIX = '[MultiPage:bg]';
 const DUCK_AUTOFILL_URL = 'https://duckduckgo.com/email/settings/autofill';
@@ -960,9 +973,9 @@ function normalizePersistentSettingValue(key, value) {
     case 'mail2925Accounts':
       return normalizeMail2925Accounts(value);
     case 'gmailCodeApiAuthToken':
-      return String(value || '').trim();
+      return normalizeGmailCodeAuthToken(value);
     case 'gmailCodeApiBaseUrl':
-      return String(value || '').trim();
+      return normalizeGmailCodeBaseUrl(value) === DEFAULT_GMAIL_CODE_BASE_URL ? '' : normalizeGmailCodeBaseUrl(value);
     default:
       return value;
   }
@@ -1507,6 +1520,13 @@ function isLuckmailProvider(stateOrProvider) {
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
   return provider === LUCKMAIL_PROVIDER;
+}
+
+function isGmailCodeProvider(stateOrProvider) {
+  const provider = typeof stateOrProvider === 'string'
+    ? stateOrProvider
+    : stateOrProvider?.mailProvider;
+  return provider === GMAIL_CODE_PROVIDER;
 }
 
 function isCustomMailProvider(stateOrProvider) {
@@ -3080,6 +3100,102 @@ async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
   }
 
   throw lastError || new Error(`步骤 ${step}：未在 LuckMail 邮箱中找到新的匹配验证码。`);
+}
+
+async function fetchGmailCodeAlias(state) {
+  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
+  if (!authToken) {
+    throw new Error('GmailCode 服务未配置 Auth Token，请在邮箱服务设置中填写。');
+  }
+  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
+  const project = DEFAULT_GMAIL_CODE_PROJECT_NAME;
+  const url = buildGmailCodeAliasUrl(baseUrl, project, authToken);
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const data = await response.json();
+  const normalized = normalizeGmailCodeAliasResponse(data);
+  if (!normalized) {
+    const errorMsg = data?.error || '未知错误';
+    throw new Error(`GmailCode 获取别名邮箱失败：${errorMsg}`);
+  }
+  return normalized;
+}
+
+async function markGmailCodeAliasUsed(state, alias) {
+  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
+  if (!authToken || !alias) return;
+  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
+  const markUrl = buildGmailCodeMarkAliasUrl(baseUrl);
+  try {
+    await fetch(markUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        auth_token: authToken,
+        mail: alias,
+        project: DEFAULT_GMAIL_CODE_PROJECT_NAME,
+        status: '1',
+      }).toString(),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err) {
+    await addLog(`GmailCode 标记别名已使用失败（${alias}）：${err.message}`, 'warn');
+  }
+}
+
+async function pollGmailCodeVerificationCode(step, state, pollPayload = {}) {
+  const authToken = normalizeGmailCodeAuthToken(state.gmailCodeApiAuthToken);
+  if (!authToken) {
+    throw new Error('GmailCode 服务未配置 Auth Token，请在邮箱服务设置中填写。');
+  }
+
+  const mail = String(state.email || '').trim();
+  if (!mail) {
+    throw new Error(`步骤 ${step}：GmailCode 轮询前缺少注册邮箱地址。`);
+  }
+
+  const baseUrl = normalizeGmailCodeBaseUrl(state.gmailCodeApiBaseUrl || DEFAULT_GMAIL_CODE_BASE_URL);
+  const project = DEFAULT_GMAIL_CODE_PROJECT_NAME;
+  const timeWindow = normalizeGmailCodeTimeWindow(pollPayload.timeWindow || '30m');
+  const maxAttempts = Math.max(1, Number(pollPayload.maxAttempts) || 5);
+  const intervalMs = Math.max(1000, Number(pollPayload.intervalMs) || 3000);
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfStopped();
+    await addLog(`步骤 ${step}：正在通过 GmailCode API 轮询验证码（${attempt}/${maxAttempts}）...`, 'info');
+
+    try {
+      const url = buildGmailCodeFetchCodeUrl(baseUrl, project, mail, authToken, timeWindow);
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const data = await response.json();
+      const normalized = normalizeGmailCodeFetchCodeResponse(data);
+
+      if (normalized?.ok && normalized.code) {
+        return {
+          ok: true,
+          code: normalized.code,
+          emailTimestamp: Date.now(),
+          mailId: normalized.request_id || '',
+        };
+      }
+
+      const reason = normalized?.error || 'code_not_found';
+      lastError = new Error(`步骤 ${step}：GmailCode 暂未找到验证码（${reason}）（${attempt}/${maxAttempts}）。`);
+      await addLog(lastError.message, attempt === maxAttempts ? 'warn' : 'info');
+    } catch (err) {
+      if (isStopError(err)) {
+        throw err;
+      }
+      lastError = err;
+      await addLog(`步骤 ${step}：GmailCode 轮询失败：${err.message}`, 'warn');
+    }
+
+    if (attempt < maxAttempts) {
+      await sleepWithStop(intervalMs);
+    }
+  }
+
+  throw lastError || new Error(`步骤 ${step}：未在 GmailCode 邮箱中找到新的匹配验证码。`);
 }
 
 function summarizeCloudflareTempEmailMessagesForLog(messages) {
@@ -5735,11 +5851,11 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   getStopRequested: () => stopRequested,
   hasSavedProgress,
   isAddPhoneAuthFailure,
-  isGmailCodeProvider: (...args) => (self.customGmailCode?.isGmailCodeProvider || (() => false))(...args),
+  isGmailCodeProvider,
   isRestartCurrentAttemptError,
   isSignupUserAlreadyExistsFailure,
   isStopError,
-  markGmailCodeAliasUsed: (...args) => (self.customGmailCode?.markGmailCodeAliasUsed || (() => Promise.resolve()))(...args),
+  markGmailCodeAliasUsed,
   launchAutoRunTimerPlan,
   normalizeAutoRunFallbackThreadIntervalMinutes,
   persistAutoRunTimerPlan,
@@ -6268,6 +6384,8 @@ const signupFlowHelpers = self.MultiPageSignupFlowHelpers?.createSignupFlowHelpe
   isSignupEmailVerificationPageUrl,
   isHotmailProvider,
   isLuckmailProvider,
+  isGmailCodeProvider,
+  fetchGmailCodeAlias,
   isSignupPasswordPageUrl,
   isTabAlive,
   reuseOrCreateTab,
@@ -6295,9 +6413,11 @@ const verificationFlowHelpers = self.MultiPageBackgroundVerificationFlow?.create
   isMail2925LimitReachedError,
   isStopError,
   LUCKMAIL_PROVIDER,
+  GMAIL_CODE_PROVIDER,
   MAIL_2925_VERIFICATION_INTERVAL_MS,
   MAIL_2925_VERIFICATION_MAX_ATTEMPTS,
   pollCloudflareTempEmailVerificationCode,
+  pollGmailCodeVerificationCode,
   pollHotmailVerificationCode,
   pollLuckmailVerificationCode,
   sendToContentScript,
@@ -6401,6 +6521,7 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   isTabAlive,
   isVerificationMailPollingError,
   LUCKMAIL_PROVIDER,
+  GMAIL_CODE_PROVIDER,
   resolveVerificationStep: verificationFlowHelpers.resolveVerificationStep,
   rerunStep7ForStep8Recovery: (...args) => rerunStep7ForStep8Recovery(...args),
   reuseOrCreateTab,
@@ -6499,6 +6620,8 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   isHotmailProvider,
   isLocalhostOAuthCallbackUrl,
   isLuckmailProvider,
+  isGmailCodeProvider,
+  markGmailCodeAliasUsed,
   isStopError,
   isTabAlive,
   launchAutoRunTimerPlan,
