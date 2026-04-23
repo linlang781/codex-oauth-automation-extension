@@ -1,4 +1,4 @@
-// sidepanel/sidepanel.js — Side Panel logic
+﻿// sidepanel/sidepanel.js — Side Panel logic
 
 const STATUS_ICONS = {
   pending: '',
@@ -125,8 +125,10 @@ const btnCloudflareTempEmailUsageGuide = document.getElementById('btn-cloudflare
 const btnCloudflareTempEmailGithub = document.getElementById('btn-cloudflare-temp-email-github');
 const hotmailSection = document.getElementById('hotmail-section');
 const mail2925Section = document.getElementById('mail2925-section');
-const luckmailSection = document.getElementById('luckmail-section');
 const gmailCodeSection = document.getElementById('gmail-code-section');
+const inputGmailCodeAuthToken = document.getElementById('input-gmail-code-auth-token');
+const inputGmailCodeBaseUrl = document.getElementById('input-gmail-code-base-url');
+const luckmailSection = document.getElementById('luckmail-section');
 const icloudSection = document.getElementById('icloud-section');
 const icloudSummary = document.getElementById('icloud-summary');
 const icloudList = document.getElementById('icloud-list');
@@ -179,8 +181,6 @@ const btnToggleMail2925List = document.getElementById('btn-toggle-mail2925-list'
 const mail2925FormShell = document.getElementById('mail2925-form-shell');
 const mail2925ListShell = document.getElementById('mail2925-list-shell');
 const mail2925AccountsList = document.getElementById('mail2925-accounts-list');
-const inputGmailCodeAuthToken = document.getElementById('input-gmail-code-auth-token');
-const inputGmailCodeBaseUrl = document.getElementById('input-gmail-code-base-url');
 const inputLuckmailApiKey = document.getElementById('input-luckmail-api-key');
 const inputLuckmailBaseUrl = document.getElementById('input-luckmail-base-url');
 const selectLuckmailEmailType = document.getElementById('select-luckmail-email-type');
@@ -267,9 +267,9 @@ const HOTMAIL_SERVICE_MODE_REMOTE = 'remote';
 const HOTMAIL_SERVICE_MODE_LOCAL = 'local';
 const ICLOUD_PROVIDER = 'icloud';
 const GMAIL_PROVIDER = 'gmail';
-const LUCKMAIL_PROVIDER = 'luckmail-api';
 const GMAIL_CODE_PROVIDER = 'gmail-code-api';
 const DEFAULT_GMAIL_CODE_BASE_URL = 'https://gmail.freeopenai.me';
+const LUCKMAIL_PROVIDER = 'luckmail-api';
 const DEFAULT_LUCKMAIL_BASE_URL = 'https://mails.luckyous.com';
 const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
@@ -598,11 +598,6 @@ const MAIL_PROVIDER_LOGIN_CONFIGS = {
   '2925': {
     label: '2925 邮箱',
     url: 'https://2925.com/#/mailList',
-  },
-  [GMAIL_CODE_PROVIDER]: {
-    label: 'GmailCode API',
-    url: 'https://gmail.freeopenai.me',
-    buttonLabel: '服务主页',
   },
 };
 
@@ -1603,7 +1598,7 @@ function collectSettingsPayload() {
     hotmailServiceMode: getSelectedHotmailServiceMode(),
     hotmailRemoteBaseUrl: inputHotmailRemoteBaseUrl.value.trim(),
     hotmailLocalBaseUrl: inputHotmailLocalBaseUrl.value.trim(),
-    gmailCodeApiAuthToken: inputGmailCodeAuthToken?.value?.trim() || '',
+    gmailCodeApiAuthToken: inputGmailCodeAuthToken?.value || '',
     gmailCodeApiBaseUrl: inputGmailCodeBaseUrl?.value?.trim() || '',
     luckmailApiKey: inputLuckmailApiKey.value,
     luckmailBaseUrl: normalizeLuckmailBaseUrl(inputLuckmailBaseUrl.value),
@@ -2502,12 +2497,12 @@ function isCustomMailProvider(provider = selectMailProvider.value) {
   return String(provider || '').trim().toLowerCase() === 'custom';
 }
 
-function isLuckmailProvider(provider = selectMailProvider.value) {
-  return String(provider || '').trim().toLowerCase() === LUCKMAIL_PROVIDER;
-}
-
 function isGmailCodeProvider(provider = selectMailProvider.value) {
   return String(provider || '').trim().toLowerCase() === GMAIL_CODE_PROVIDER;
+}
+
+function isLuckmailProvider(provider = selectMailProvider.value) {
+  return String(provider || '').trim().toLowerCase() === LUCKMAIL_PROVIDER;
 }
 
 function isIcloudMailProvider(provider = selectMailProvider.value) {
@@ -2801,11 +2796,11 @@ function updateMailProviderUI() {
   const useGeneratedAlias = usesGeneratedAliasMailProvider(selectMailProvider.value, mail2925Mode);
   const useInbucket = selectMailProvider.value === 'inbucket';
   const useHotmail = selectMailProvider.value === 'hotmail-api';
-  const useLuckmail = isLuckmailProvider();
   const useGmailCode = isGmailCodeProvider();
+  const useLuckmail = isLuckmailProvider();
   const useCustomEmail = isCustomMailProvider();
   const useIcloudProvider = isIcloudMailProvider();
-  const useEmailGenerator = !useHotmail && !useLuckmail && !useGmailCode && !useGeneratedAlias && !useCustomEmail;
+  const useEmailGenerator = !useHotmail && !useLuckmail && !useGeneratedAlias && !useCustomEmail;
   const useCloudflareTempEmailProvider = selectMailProvider.value === 'cloudflare-temp-email';
   const aliasUiCopy = useGeneratedAlias
     ? getManagedAliasProviderUiCopy(selectMailProvider.value, mail2925Mode)
@@ -2875,12 +2870,11 @@ function updateMailProviderUI() {
   if (mail2925Section) {
     mail2925Section.style.display = useMail2925AccountPool ? '' : 'none';
   }
+  if (gmailCodeSection) {
+    gmailCodeSection.style.display = useGmailCode ? '' : 'none';
+  }
   if (luckmailSection) {
     luckmailSection.style.display = useLuckmail ? '' : 'none';
-  }
-  const useGmailCodeProvider = isGmailCodeProvider();
-  if (gmailCodeSection) {
-    gmailCodeSection.style.display = useGmailCodeProvider ? '' : 'none';
   }
   labelEmailPrefix.textContent = '邮箱前缀';
   inputEmailPrefix.placeholder = '例如 abc';
@@ -2917,7 +2911,7 @@ function updateMailProviderUI() {
     : (useLuckmail
       ? '步骤 3 自动购买 LuckMail 邮箱并回填'
       : (useGmailCode
-        ? '步骤 3 自动获取 GmailCode 别名邮箱并回填'
+        ? '步骤 3 自动请求 GmailCode 别名邮箱并回填'
         : (useGeneratedAlias ? '步骤 3 自动生成 2925 邮箱并回填' : uiCopy.placeholder)));
   if (useGmail && useGeneratedAlias) {
     inputEmail.placeholder = '步骤 3 自动生成 Gmail +tag 邮箱并回填';
@@ -2934,8 +2928,8 @@ function updateMailProviderUI() {
       ? '请先校验并选择一个 Hotmail 账号'
       : (useLuckmail
         ? '步骤 3 会自动购买 LuckMail 邮箱并用于收码'
-      : (useGmailCode
-        ? '步骤 3 会通过 GmailCode API 自动获取别名邮箱并用于收码'
+        : (useGmailCode
+          ? '步骤 3 会自动请求 GmailCode 别名邮箱并用于收码'
       : (useGeneratedAlias
         ? '步骤 3 会自动生成邮箱，无需手动获取'
         : (useCustomEmail ? '请先填写自定义注册邮箱，成功一轮后会自动清空' : `先自动获取${uiCopy.label}，或手动粘贴邮箱后再继续`))));
@@ -2963,6 +2957,8 @@ function updateMailProviderUI() {
     inputEmail.value = getCurrentHotmailEmail();
   } else if (useLuckmail) {
     inputEmail.value = getCurrentLuckmailEmail();
+  } else if (useGmailCode) {
+    inputEmail.value = '';
   }
   renderHotmailAccounts();
   if (useMail2925) {

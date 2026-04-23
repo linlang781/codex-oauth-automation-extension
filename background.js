@@ -1,4 +1,4 @@
-// background.js — Service Worker: orchestration, state, tab management, message routing
+﻿// background.js — Service Worker: orchestration, state, tab management, message routing
 
 importScripts(
   'managed-alias-utils.js',
@@ -167,6 +167,21 @@ const HUMAN_STEP_DELAY_MIN = 700;
 const HUMAN_STEP_DELAY_MAX = 2200;
 const STEP6_MAX_ATTEMPTS = 3;
 const STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS = 8;
+const STEP_ENTER_DELAY_MIN_SECONDS = 0;
+const STEP_ENTER_DELAY_MAX_SECONDS = 600;
+const DEFAULT_STEP_ENTER_DELAY_SECONDS = 5;
+const DEFAULT_STEP_ENTER_DELAYS = Object.freeze({
+  1: 1,
+  2: 5,
+  3: 5,
+  4: 5,
+  5: 5,
+  6: 5,
+  7: 5,
+  8: 15,
+  9: 5,
+  10: 5,
+});
 const OAUTH_FLOW_TIMEOUT_MS = 5 * 60 * 1000;
 const SUB2API_STEP1_RESPONSE_TIMEOUT_MS = 90000;
 const SUB2API_STEP9_RESPONSE_TIMEOUT_MS = 120000;
@@ -307,6 +322,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   mail2925Accounts: [],
   gmailCodeApiAuthToken: 'linlang781456868',
   gmailCodeApiBaseUrl: '',
+  stepEnterDelayOverrides: null,
 };
 
 const PERSISTED_SETTING_KEYS = Object.keys(PERSISTED_SETTING_DEFAULTS);
@@ -695,6 +711,7 @@ function normalizeMailProvider(value = '') {
     case HOTMAIL_PROVIDER:
     case LUCKMAIL_PROVIDER:
     case CLOUDFLARE_TEMP_EMAIL_PROVIDER:
+    case GMAIL_CODE_PROVIDER:
     case '163':
     case '163-vip':
     case 'qq':
@@ -885,6 +902,37 @@ function resolveCloudflareTempEmailPollTargetEmail(state = {}, pollPayload = {},
   return normalizeCloudflareTempEmailReceiveMailbox(state.email);
 }
 
+function normalizeStepEnterDelaySeconds(value, fallback = DEFAULT_STEP_ENTER_DELAY_SECONDS) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  const floored = Math.floor(numeric);
+  if (floored < STEP_ENTER_DELAY_MIN_SECONDS) return STEP_ENTER_DELAY_MIN_SECONDS;
+  if (floored > STEP_ENTER_DELAY_MAX_SECONDS) return STEP_ENTER_DELAY_MAX_SECONDS;
+  return floored;
+}
+
+function normalizeStepEnterDelayOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result = {};
+  for (const rawKey of Object.keys(value)) {
+    const stepId = Number(rawKey);
+    if (!Number.isInteger(stepId) || stepId <= 0) continue;
+    if (!(stepId in DEFAULT_STEP_ENTER_DELAYS)) continue;
+    result[stepId] = normalizeStepEnterDelaySeconds(value[rawKey], DEFAULT_STEP_ENTER_DELAYS[stepId]);
+  }
+  return result;
+}
+
+function getStepEnterDelaySeconds(state, step) {
+  const overrides = normalizeStepEnterDelayOverrides(state?.stepEnterDelayOverrides);
+  if (step in overrides) {
+    return overrides[step];
+  }
+  return DEFAULT_STEP_ENTER_DELAYS[step] ?? DEFAULT_STEP_ENTER_DELAY_SECONDS;
+}
+
 function normalizePersistentSettingValue(key, value) {
   switch (key) {
     case 'panelMode':
@@ -976,6 +1024,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeGmailCodeAuthToken(value);
     case 'gmailCodeApiBaseUrl':
       return normalizeGmailCodeBaseUrl(value) === DEFAULT_GMAIL_CODE_BASE_URL ? '' : normalizeGmailCodeBaseUrl(value);
+    case 'stepEnterDelayOverrides':
+      return normalizeStepEnterDelayOverrides(value);
     default:
       return value;
   }
@@ -2182,21 +2232,11 @@ function isGeneratedAliasProvider(stateOrProvider, mail2925Mode = undefined) {
   const provider = typeof stateOrProvider === 'string'
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
-  const resolvedMail2925Mode = mail2925Mode !== undefined
-    ? normalizeMail2925Mode(mail2925Mode)
-    : getMail2925Mode(stateOrProvider);
   const utils = (typeof self !== 'undefined' ? self : globalThis).MultiPageManagedAliasUtils || null;
-  if (utils?.usesManagedAliasGeneration) {
-    return utils.usesManagedAliasGeneration(provider, { mail2925Mode: resolvedMail2925Mode });
-  }
   if (utils?.isManagedAliasProvider) {
-    if (String(provider || '').trim().toLowerCase() === '2925') {
-      return utils.isManagedAliasProvider(provider) && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE;
-    }
     return utils.isManagedAliasProvider(provider);
   }
-  return provider === GMAIL_PROVIDER
-    || (provider === '2925' && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE);
+  return provider === GMAIL_PROVIDER || provider === '2925';
 }
 
 function shouldUseCustomRegistrationEmail(state = {}) {
@@ -2339,21 +2379,11 @@ function isGeneratedAliasProvider(stateOrProvider, mail2925Mode = undefined) {
   const provider = typeof stateOrProvider === 'string'
     ? stateOrProvider
     : stateOrProvider?.mailProvider;
-  const resolvedMail2925Mode = mail2925Mode !== undefined
-    ? normalizeMail2925Mode(mail2925Mode)
-    : getMail2925Mode(stateOrProvider);
   const utils = getManagedAliasUtils();
-  if (utils?.usesManagedAliasGeneration) {
-    return utils.usesManagedAliasGeneration(provider, { mail2925Mode: resolvedMail2925Mode });
-  }
   if (utils?.isManagedAliasProvider) {
-    if (String(provider || '').trim().toLowerCase() === '2925') {
-      return utils.isManagedAliasProvider(provider) && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE;
-    }
     return utils.isManagedAliasProvider(provider);
   }
-  return provider === GMAIL_PROVIDER
-    || (provider === '2925' && resolvedMail2925Mode === MAIL_2925_MODE_PROVIDE);
+  return provider === GMAIL_PROVIDER || provider === '2925';
 }
 
 function shouldUseCustomRegistrationEmail(state = {}) {
@@ -3752,20 +3782,6 @@ function parseUrlSafely(rawUrl) {
   }
 }
 
-function normalizeSub2ApiUrl(rawUrl) {
-  if (typeof navigationUtils !== 'undefined' && navigationUtils?.normalizeSub2ApiUrl) {
-    return navigationUtils.normalizeSub2ApiUrl(rawUrl);
-  }
-  const input = (rawUrl || '').trim() || DEFAULT_SUB2API_URL;
-  const withProtocol = /^https?:\/\//i.test(input) ? input : `https://${input}`;
-  const parsed = new URL(withProtocol);
-  if (!parsed.pathname || parsed.pathname === '/') {
-    parsed.pathname = '/admin/accounts';
-  }
-  parsed.hash = '';
-  return parsed.toString();
-}
-
 function normalizeCodex2ApiUrl(rawUrl) {
   if (typeof navigationUtils !== 'undefined' && navigationUtils?.normalizeCodex2ApiUrl) {
     return navigationUtils.normalizeCodex2ApiUrl(rawUrl);
@@ -3774,6 +3790,20 @@ function normalizeCodex2ApiUrl(rawUrl) {
   const withProtocol = /^https?:\/\//i.test(input) ? input : `http://${input}`;
   const parsed = new URL(withProtocol);
   if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/admin') {
+    parsed.pathname = '/admin/accounts';
+  }
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function normalizeSub2ApiUrl(rawUrl) {
+  if (typeof navigationUtils !== 'undefined' && navigationUtils?.normalizeSub2ApiUrl) {
+    return navigationUtils.normalizeSub2ApiUrl(rawUrl);
+  }
+  const input = (rawUrl || '').trim() || DEFAULT_SUB2API_URL;
+  const withProtocol = /^https?:\/\//i.test(input) ? input : `https://${input}`;
+  const parsed = new URL(withProtocol);
+  if (!parsed.pathname || parsed.pathname === '/') {
     parsed.pathname = '/admin/accounts';
   }
   parsed.hash = '';
@@ -4108,7 +4138,6 @@ function isRetryableContentScriptTransportError(error) {
 }
 
 const navigationUtils = self.MultiPageBackgroundNavigationUtils?.createNavigationUtils({
-  DEFAULT_CODEX2API_URL,
   DEFAULT_SUB2API_URL,
   normalizeLocalCpaStep9Mode,
 });
@@ -4173,17 +4202,6 @@ function getTerminalSecurityBlockedTitle(error) {
   return 'Cloudflare 风控拦截';
 }
 
-function isBrowserSwitchRequiredError(error) {
-  return getErrorMessage(error).startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX);
-}
-
-function getBrowserSwitchRequiredMessage(error) {
-  const message = getErrorMessage(error);
-  return message.startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX)
-    ? message.slice(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX.length).trim()
-    : message;
-}
-
 function broadcastSecurityBlockedAlert(title = '流程已完全停止', message = CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE, alertText = '检测到 Cloudflare 风控，请暂停当前操作。') {
   chrome.runtime.sendMessage({
     type: 'SECURITY_BLOCKED_ALERT',
@@ -4198,19 +4216,30 @@ function broadcastSecurityBlockedAlert(title = '流程已完全停止', message 
   }).catch(() => { });
 }
 
-async function handleCloudflareSecurityBlocked(error) {
-  const title = getTerminalSecurityBlockedTitle(error);
-  const message = getTerminalSecurityBlockedMessage(error);
-  const alertText = getTerminalSecurityBlockedAlertText(error);
-  await requestStop({ logMessage: message });
-  broadcastSecurityBlockedAlert(title, message, alertText);
-  return message;
+function isBrowserSwitchRequiredError(error) {
+  return getErrorMessage(error).startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX);
+}
+
+function getBrowserSwitchRequiredMessage(error) {
+  const message = getErrorMessage(error);
+  return message.startsWith(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX)
+    ? message.slice(BROWSER_SWITCH_REQUIRED_ERROR_PREFIX.length).trim()
+    : message;
 }
 
 async function handleBrowserSwitchRequired(error) {
   const message = getBrowserSwitchRequiredMessage(error)
     || '检测到第 10 步的特殊冲突状态，请更换浏览器后重新进行注册登录。';
   await requestStop({ logMessage: message });
+  return message;
+}
+
+async function handleCloudflareSecurityBlocked(error) {
+  const title = getTerminalSecurityBlockedTitle(error);
+  const message = getTerminalSecurityBlockedMessage(error);
+  const alertText = getTerminalSecurityBlockedAlertText(error);
+  await requestStop({ logMessage: message });
+  broadcastSecurityBlockedAlert(title, message, alertText);
   return message;
 }
 
@@ -5507,6 +5536,12 @@ async function executeStep(step, options = {}) {
       await setState({ flowStartTime: Date.now() });
     }
 
+    const enterDelaySeconds = getStepEnterDelaySeconds(state, step);
+    if (enterDelaySeconds > 0) {
+      await addLog(`步骤 ${step}：等待 ${enterDelaySeconds} 秒让页面/接口加载就绪后再执行操作...`, 'info');
+      await sleepWithStop(enterDelaySeconds * 1000);
+    }
+
     await stepRegistry.executeStep(step, state);
   } catch (err) {
     executionError = err;
@@ -5695,10 +5730,12 @@ const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGenerat
   DUCK_AUTOFILL_URL,
   fetch,
   fetchIcloudHideMyEmail,
+  fetchGmailCodeAlias,
   getCloudflareTempEmailAddressFromResponse,
   getCloudflareTempEmailConfig,
   getState,
   ensureMail2925AccountForFlow,
+  isGmailCodeProvider,
   joinCloudflareTempEmailUrl,
   normalizeCloudflareDomain,
   normalizeCloudflareTempEmailAddress,
@@ -6367,6 +6404,7 @@ const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   sendToContentScript,
   sendToContentScriptResilient,
   waitForTabUrlFamily,
+  DEFAULT_CODEX2API_URL,
   DEFAULT_SUB2API_GROUP_NAME,
   SUB2API_STEP1_RESPONSE_TIMEOUT_MS,
 });
@@ -6469,6 +6507,7 @@ const step4Executor = self.MultiPageBackgroundStep4?.createStep4Executor({
   HOTMAIL_PROVIDER,
   isTabAlive,
   LUCKMAIL_PROVIDER,
+  GMAIL_CODE_PROVIDER,
   CLOUDFLARE_TEMP_EMAIL_PROVIDER,
   resolveVerificationStep: verificationFlowHelpers.resolveVerificationStep,
   reuseOrCreateTab,
@@ -6767,6 +6806,9 @@ function getMailConfig(state) {
   }
   if (provider === LUCKMAIL_PROVIDER) {
     return { provider: LUCKMAIL_PROVIDER, label: 'LuckMail（API 购邮）' };
+  }
+  if (provider === GMAIL_CODE_PROVIDER) {
+    return { provider: GMAIL_CODE_PROVIDER, label: 'GmailCode（gmail.freeopenai.me）' };
   }
   if (provider === CLOUDFLARE_TEMP_EMAIL_PROVIDER) {
     return { provider: CLOUDFLARE_TEMP_EMAIL_PROVIDER, label: 'Cloudflare Temp Email' };
@@ -7750,5 +7792,3 @@ chrome.runtime.onInstalled.addListener(() => {
 restoreAutoRunTimerIfNeeded().catch((err) => {
   console.error(LOG_PREFIX, 'Failed to restore auto run timer:', err);
 });
-
-importScripts('background-custom.js');
