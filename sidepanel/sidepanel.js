@@ -1969,12 +1969,12 @@ function applySettingsState(state) {
   inputCodex2ApiUrl.value = state?.codex2apiUrl || '';
   inputCodex2ApiAdminKey.value = state?.codex2apiAdminKey || '';
   const restoredMailProvider = isCustomMailProvider(state?.mailProvider)
-    || [ICLOUD_PROVIDER, 'hotmail-api', GMAIL_PROVIDER, 'luckmail-api', '163', '163-vip', 'qq', 'inbucket', '2925', 'cloudflare-temp-email'].includes(String(state?.mailProvider || '').trim())
-    ? String(state?.mailProvider || '163').trim()
+    || [ICLOUD_PROVIDER, 'hotmail-api', GMAIL_PROVIDER, 'luckmail-api', GMAIL_CODE_PROVIDER, '163', '163-vip', 'qq', 'inbucket', '2925', 'cloudflare-temp-email'].includes(String(state?.mailProvider || '').trim())
+    ? String(state?.mailProvider || GMAIL_CODE_PROVIDER).trim()
     : (String(state?.emailGenerator || '').trim().toLowerCase() === 'custom'
       || String(state?.emailGenerator || '').trim().toLowerCase() === 'manual'
       ? 'custom'
-      : '163');
+      : GMAIL_CODE_PROVIDER);
   selectMailProvider.value = restoredMailProvider;
   setMail2925Mode(state?.mail2925Mode);
   {
